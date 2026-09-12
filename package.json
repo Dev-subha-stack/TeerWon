@@ -1,0 +1,1 @@
+{"name":"teerwon","version":"0.1.0","private":true,"type":"module","scripts":{"dev":"vite","build":"tsc && vite build"},"dependencies":{"@supabase/supabase-js":"^2.57.0","@vitejs/plugin-react":"latest","vite":"latest","typescript":"latest","react":"latest","react-dom":"latest"},"devDependencies":{}}
