@@ -1,68 +1,35 @@
-import React,{useEffect,useState}from'react';
+import React,{useEffect,useRef,useState}from'react';
 import{createRoot}from'react-dom/client';
 import{createClient}from'@supabase/supabase-js';
 import'./style.css';
-
 const supabase=createClient(import.meta.env.VITE_SUPABASE_URL,import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY);
 
 function App(){
- const[s,setS]=useState<any>(null),[email,setEmail]=useState(''),[password,setPassword]=useState(''),[username,setUsername]=useState('');
- const[groups,setGroups]=useState<any[]>([]),[active,setActive]=useState<any>(null),[tab,setTab]=useState('chat');
- const[messages,setMessages]=useState<any[]>([]),[tasks,setTasks]=useState<any[]>([]),[requests,setRequests]=useState<any[]>([]);
- const[title,setTitle]=useState(''),[details,setDetails]=useState(''),[contactName,setContactName]=useState(''),[contactInfo,setContactInfo]=useState(''),[amount,setAmount]=useState('');
-
- useEffect(()=>{supabase.auth.getSession().then(x=>setS(x.data.session));const{sub}=supabase.auth.onAuthStateChange((_,x)=>setS(x)).data;return()=>sub.unsubscribe()},[]);
+ const[s,setS]=useState<any>(null),[email,setEmail]=useState(''),[password,setPassword]=useState(''),[username,setUsername]=useState(''),[signup,setSignup]=useState(false);
+ const[groups,setGroups]=useState<any[]>([]),[active,setActive]=useState<any>(null),[tab,setTab]=useState<'chat'|'tasks'|'requests'>('chat');
+ const[messages,setMessages]=useState<any[]>([]),[tasks,setTasks]=useState<any[]>([]),[requests,setRequests]=useState<any[]>([]),[members,setMembers]=useState<any[]>([]);
+ const[text,setText]=useState(''),[busy,setBusy]=useState(false);const bottom=useRef<HTMLDivElement>(null);
+ useEffect(()=>{supabase.auth.getSession().then(({data})=>setS(data.session));const{data:{subscription}}=supabase.auth.onAuthStateChange((_,x)=>setS(x));return()=>subscription.unsubscribe()},[]);
  useEffect(()=>{if(s)loadGroups()},[s]);
-
- async function auth(signup:boolean){const r=signup?await supabase.auth.signUp({email,password,options:{data:{username}}}):await supabase.auth.signInWithPassword({email,password});if(r.error)alert(r.error.message);else if(signup)alert('Account created. Check email confirmation if enabled.')}
+ useEffect(()=>{if(!active)return;loadRoom();const ch=supabase.channel('room-'+active.id).on('postgres_changes',{event:'*',schema:'public',table:'messages',filter:'group_id=eq.'+active.id},loadRoom).on('postgres_changes',{event:'*',schema:'public',table:'tasks',filter:'group_id=eq.'+active.id},loadRoom).on('postgres_changes',{event:'*',schema:'public',table:'user_requests',filter:'group_id=eq.'+active.id},loadRoom).subscribe();return()=>{supabase.removeChannel(ch)}},[active]);
+ useEffect(()=>bottom.current?.scrollIntoView({behavior:'smooth'}),[messages]);
+ async function auth(e:React.FormEvent){e.preventDefault();setBusy(true);const r=signup?await supabase.auth.signUp({email,password,options:{data:{username}}}):await supabase.auth.signInWithPassword({email,password});setBusy(false);if(r.error)alert(r.error.message);else if(signup)alert('Account created. Check your email if confirmation is enabled.')}
  async function loadGroups(){const{data,error}=await supabase.from('groups').select('*').order('created_at',{ascending:false});if(error)alert(error.message);setGroups(data||[])}
- async function createGroup(){const name=prompt('Group name');if(!name)return;const description=prompt('Description')||'';const{error}=await supabase.from('groups').insert({name,description,created_by:s.user.id});if(error)alert(error.message);loadGroups()}
- async function open(g:any){
-  setActive(g);
-  const[m,t,r]=await Promise.all([
-   supabase.from('messages').select('*,profiles(username)').eq('group_id',g.id).order('created_at'),
-   supabase.from('tasks').select('*').eq('group_id',g.id).order('created_at',{ascending:false}),
-   supabase.from('user_requests').select('*').eq('group_id',g.id).order('created_at',{ascending:false})
-  ]);
-  setMessages(m.data||[]);setTasks(t.data||[]);setRequests(r.data||[]);
- }
- async function join(g:any){const r=await supabase.from('group_members').insert({group_id:g.id,user_id:s.user.id});if(r.error&&!r.error.message.includes('duplicate'))alert(r.error.message);open(g)}
- async function send(){if(!active)return;const content=prompt('Message');if(content){const r=await supabase.from('messages').insert({group_id:active.id,user_id:s.user.id,content});if(r.error)alert(r.error.message);else open(active)}}
- async function task(){if(!active)return;const title=prompt('Task title');if(!title)return;const description=prompt('Task details')||'';const r=await supabase.from('tasks').insert({group_id:active.id,title,description,created_by:s.user.id});if(r.error)alert('Only group admins can create tasks');else open(active)}
- async function submitRequest(e:React.FormEvent){
-  e.preventDefault();if(!active||!title.trim())return;
-  const payload:any={group_id:active.id,user_id:s.user.id,title:title.trim(),details,contact_name:contactName||null,contact_info:contactInfo||null};
-  if(amount.trim())payload.amount=Number(amount);
-  const r=await supabase.from('user_requests').insert(payload);
-  if(r.error)alert(r.error.message);else{setTitle('');setDetails('');setContactName('');setContactInfo('');setAmount('');alert('Request sent to the group admins.');open(active)}
- }
- async function reviewRequest(id:string,status:string){const admin_note=prompt('Admin note (optional)')||null;const r=await supabase.from('user_requests').update({status,admin_note,reviewed_by:s.user.id,reviewed_at:new Date().toISOString()}).eq('id',id);if(r.error)alert(r.error.message);else open(active)}
-
- if(!s)return <main className="auth"><h1>TeerWon</h1><p>Groups · Tasks · Chat</p><input placeholder="Username for signup" value={username} onChange={e=>setUsername(e.target.value)}/><input placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)}/><input placeholder="Password" type="password" value={password} onChange={e=>setPassword(e.target.value)}/><button onClick={()=>auth(false)}>Login</button><button onClick={()=>auth(true)}>Create account</button></main>;
-
- if(!active)return <main><header>TeerWon <button onClick={()=>supabase.auth.signOut()}>Logout</button></header><section><button onClick={createGroup}>＋ Create group</button>{groups.map(g=><article key={g.id} onClick={()=>open(g)}><h3>{g.name}</h3><p>{g.description}</p><button onClick={e=>{e.stopPropagation();join(g)}}>Join / Open</button></article>)}</section></main>;
-
- return <main>
-  <header><button onClick={()=>setActive(null)}>←</button><b>{active.name}</b></header>
-  <nav><button onClick={()=>setTab('chat')}>Chat</button><button onClick={()=>setTab('tasks')}>Tasks</button><button onClick={()=>setTab('requests')}>Requests</button></nav>
-  {tab==='chat'&&<section>{messages.map(m=><div className="message" key={m.id}><b>{m.profiles?.username||'User'}</b><br/>{m.content}</div>)}<button className="fab" onClick={send}>＋</button></section>}
-  {tab==='tasks'&&<section><button onClick={task}>＋ Create task</button>{tasks.map(t=><article key={t.id}><h3>{t.title}</h3><p>{t.description}</p></article>)}</section>}
-  {tab==='requests'&&<section>
-   <h2>Send a request to admins</h2>
-   <p className="privacy">Only share contact information you are comfortable giving to this group's admins.</p>
-   <form onSubmit={submitRequest}>
-    <input required placeholder="Request title" value={title} onChange={e=>setTitle(e.target.value)}/>
-    <textarea placeholder="Explain your request or task" value={details} onChange={e=>setDetails(e.target.value)}/>
-    <input placeholder="Your name (optional)" value={contactName} onChange={e=>setContactName(e.target.value)}/>
-    <input placeholder="Contact info, e.g. email (optional)" value={contactInfo} onChange={e=>setContactInfo(e.target.value)}/>
-    <input type="number" min="0" step="0.01" placeholder="Optional amount for a legitimate non-gambling request" value={amount} onChange={e=>setAmount(e.target.value)}/>
-    <button type="submit">Send to admins</button>
-   </form>
-   <h2>Requests</h2>
-   {requests.map(r=><article key={r.id}><h3>{r.title}</h3><p>{r.details}</p><small>Status: <b>{r.status}</b></small>{r.contact_name&&<p>Name: {r.contact_name}</p>}{r.contact_info&&<p>Contact: {r.contact_info}</p>}{r.amount!=null&&<p>Amount: {r.amount}</p>}{r.admin_note&&<p>Admin: {r.admin_note}</p>}
-    {r.status==='open'&&<div><button onClick={()=>reviewRequest(r.id,'approved')}>Approve</button><button className="danger" onClick={()=>reviewRequest(r.id,'rejected')}>Reject</button></div>}
-   </article>)}
-  </section>}
+ async function loadRoom(){if(!active)return;const[m,t,r,mem]=await Promise.all([supabase.from('messages').select('*,profiles(username)').eq('group_id',active.id).order('created_at'),supabase.from('tasks').select('*').eq('group_id',active.id).order('created_at',{ascending:false}),supabase.from('user_requests').select('*').eq('group_id',active.id).order('created_at',{ascending:false}),supabase.from('group_members').select('user_id,role').eq('group_id',active.id)]);setMessages(m.data||[]);setTasks(t.data||[]);setRequests(r.data||[]);setMembers(mem.data||[])}
+ const myRole=members.find(x=>x.user_id===s?.user?.id)?.role;const isAdmin=myRole==='owner'||myRole==='admin'||active?.created_by===s?.user?.id;
+ async function createGroup(){const name=prompt('Group name');if(!name)return;const description=prompt('Group description')||'';const{error}=await supabase.from('groups').insert({name,description,created_by:s.user.id});if(error)alert(error.message);else loadGroups()}
+ async function join(g:any){const{error}=await supabase.from('group_members').insert({group_id:g.id,user_id:s.user.id});if(error&&!error.message.toLowerCase().includes('duplicate'))alert(error.message);setActive(g)}
+ async function send(e:React.FormEvent){e.preventDefault();if(!text.trim()||!active)return;const value=text.trim();setText('');const{error}=await supabase.from('messages').insert({group_id:active.id,user_id:s.user.id,content:value});if(error){alert(error.message);setText(value)}}
+ async function createTask(){const title=prompt('Task title');if(!title)return;const description=prompt('Task details')||'';const{error}=await supabase.from('tasks').insert({group_id:active.id,title,description,created_by:s.user.id});if(error)alert(error.message)}
+ async function requestAdmin(){const title=prompt('What do you want to request?');if(!title)return;const details=prompt('Details')||'';const contact_name=prompt('Your name (optional)')||null;const contact_info=prompt('Contact info (optional)')||null;const{error}=await supabase.from('user_requests').insert({group_id:active.id,user_id:s.user.id,title,details,contact_name,contact_info});if(error)alert(error.message)}
+ async function review(id:string,status:string){if(!isAdmin)return;const admin_note=prompt('Admin note (optional)')||null;const{error}=await supabase.from('user_requests').update({status,admin_note,reviewed_by:s.user.id,reviewed_at:new Date().toISOString()}).eq('id',id);if(error)alert(error.message)}
+ async function promote(user_id:string){if(!isAdmin)return;const role=prompt('Role: admin or member','admin');if(role!=='admin'&&role!=='member')return;const{error}=await supabase.from('group_members').update({role}).eq('group_id',active.id).eq('user_id',user_id);if(error)alert(error.message);else loadRoom()}
+ if(!s)return <main className="auth"><div className="authcard"><div className="logo">T</div><h1>TeerWon</h1><p>Connect. Organize. Complete.</p><form onSubmit={auth}>{signup&&<input required placeholder="Username" value={username} onChange={e=>setUsername(e.target.value)}/>}<input required type="email" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)}/><input required minLength={6} type="password" placeholder="Password" value={password} onChange={e=>setPassword(e.target.value)}/><button disabled={busy}>{busy?'Please wait...':signup?'Create account':'Login'}</button></form><button className="textbtn" onClick={()=>setSignup(!signup)}>{signup?'Already have an account? Login':'New here? Create an account'}</button></div></main>;
+ if(!active)return <main className="app"><header><div><b>TeerWon</b><small>Public communities</small></div><button className="ghost" onClick={()=>supabase.auth.signOut()}>Logout</button></header><section><div className="sectionhead"><div><h2>Your groups</h2><p>Join a community or create your own.</p></div><button onClick={createGroup}>＋ Create</button></div>{groups.length===0?<div className="empty">No groups yet. Create the first one!</div>:groups.map(g=><article className="card groupcard" key={g.id} onClick={()=>setActive(g)}><div className="avatar">{g.name.slice(0,1).toUpperCase()}</div><div><h3>{g.name}</h3><p>{g.description||'No description'}</p></div><button onClick={e=>{e.stopPropagation();join(g)}}>Join</button></article>)}</section></main>;
+ return <main className="app"><header><button className="back" onClick={()=>setActive(null)}>←</button><div className="roomtitle"><b>{active.name}</b><small>{members.length} members · {isAdmin?'Admin':'Member'}</small></div></header><nav><button className={tab==='chat'?'active':''} onClick={()=>setTab('chat')}>💬 Chat</button><button className={tab==='tasks'?'active':''} onClick={()=>setTab('tasks')}>✓ Tasks</button><button className={tab==='requests'?'active':''} onClick={()=>setTab('requests')}>📨 Requests</button></nav>
+ {tab==='chat'&&<section className="chat">{messages.map(m=><div className={'message '+(m.user_id===s.user.id?'mine':'')} key={m.id}><b>{m.profiles?.username||'User'}</b><div>{m.content}</div><small>{new Date(m.created_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</small></div>)}<div ref={bottom}/><form className="composer" onSubmit={send}><input value={text} onChange={e=>setText(e.target.value)} placeholder="Message the group..."/><button>Send</button></form></section>}
+ {tab==='tasks'&&<section>{<div className="sectionhead"><div><h2>Tasks</h2><p>Tasks created for this group.</p></div>{isAdmin&&<button onClick={createTask}>＋ New task</button>}</div>}{tasks.map(t=><article className="card" key={t.id}><h3>{t.title}</h3><p>{t.description}</p><span className="pill">Open</span></article>)}{!tasks.length&&<div className="empty">No tasks yet.</div>}</section>}
+ {tab==='requests'&&<section><div className="sectionhead"><div><h2>Requests</h2><p>Send information or requests to group admins.</p></div><button onClick={requestAdmin}>＋ Send request</button></div><p className="privacy">Only share contact information you are comfortable sharing with this group's admins.</p>{requests.map(r=><article className="card" key={r.id}><div className="statusline"><h3>{r.title}</h3><span className={'status '+r.status}>{r.status}</span></div><p>{r.details}</p>{r.contact_name&&<p><b>Name:</b> {r.contact_name}</p>}{r.contact_info&&<p><b>Contact:</b> {r.contact_info}</p>}{r.admin_note&&<p><b>Admin:</b> {r.admin_note}</p>}{isAdmin&&r.status==='open'&&<div><button onClick={()=>review(r.id,'approved')}>Approve</button><button className="reject" onClick={()=>review(r.id,'rejected')}>Reject</button></div>}</article>)}{isAdmin&&<details className="members"><summary>Manage members ({members.length})</summary>{members.map(m=><div key={m.user_id}>{m.user_id===s.user.id?'You':m.user_id.slice(0,8)} — <b>{m.role}</b>{m.user_id!==s.user.id&&<button onClick={()=>promote(m.user_id)}>Change role</button>}</div>)}</details>}</section>}
  </main>
 }
 createRoot(document.getElementById('root')!).render(<App/>);
